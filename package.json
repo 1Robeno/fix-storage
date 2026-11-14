@@ -1,0 +1,73 @@
+{
+  "name": "fix-storage",
+  "version": "0.1.0",
+  "description": "See what is filling your Mac's disk, find the culprit, and clear what is safe to clear, from the terminal.",
+  "keywords": [
+    "macos",
+    "disk",
+    "storage",
+    "disk-usage",
+    "cleanup",
+    "cache",
+    "tui",
+    "terminal",
+    "cli",
+    "du",
+    "node_modules"
+  ],
+  "homepage": "https://github.com/govijr/fix-storage#readme",
+  "bugs": {
+    "url": "https://github.com/govijr/fix-storage/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/govijr/fix-storage.git"
+  },
+  "license": "MIT",
+  "author": "the fix-storage authors",
+  "main": "dist/main.js",
+  "bin": {
+    "fix-storage": "bin/fix-storage.cjs"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json && node bin/fix-storage.cjs",
+    "demo": "tsc -p tsconfig.json && node bin/fix-storage.cjs --demo",
+    "plain": "tsc -p tsconfig.json && node bin/fix-storage.cjs --plain",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@zenbu-labs/pixel": "^0.2.19",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "typescript": "^5.5.0"
+  },
+  "trustedDependencies": [
+    "@zenbu-labs/pixel"
+  ],
+  "allowScripts": {
+    "@zenbu-labs/pixel": true
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ]
+}

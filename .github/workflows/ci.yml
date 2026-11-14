@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (Node ${{ matrix.node }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    env:
+      # The graphics runtime isn't needed to build or to run the text modes.
+      PIXEL_SKIP_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Smoke test the text modes
+        run: |
+          node bin/fix-storage.cjs --help
+          node bin/fix-storage.cjs --demo --plain
+          node bin/fix-storage.cjs --demo --json | node -e 'JSON.parse(require("fs").readFileSync(0, "utf8"))'
+      - name: Package contents
+        run: npm pack --dry-run
+
+  installer:
+    name: Lint install.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck --shell=sh install.sh

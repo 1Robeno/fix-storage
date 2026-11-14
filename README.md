@@ -1,0 +1,157 @@
+<div align="center">
+
+# fix-storage
+
+**See what is filling your Mac's disk, find the culprit, and clear what is safe to clear, from the terminal.**
+
+[![CI](https://github.com/govijr/fix-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/govijr/fix-storage/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/govijr/fix-storage?color=4ade80)](https://github.com/govijr/fix-storage/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
+
+<!-- Add a screenshot or recording at docs/screenshot.png and uncomment:
+<img src="docs/screenshot.png" alt="fix-storage showing a dot-matrix disk meter, categories, and a folder's biggest culprit" width="900">
+-->
+
+</div>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/govijr/fix-storage/main/install.sh | sh
+```
+
+---
+
+## Why
+
+"System Data: 86 GB" and a full disk warning don't tell you what to do. fix-storage measures your disk the way Finder's Storage panel does, then goes further:
+
+- **Finds the culprit.** Under every big folder it prints where the space actually is, following the biggest subfolder down: `└ mostly in app/node_modules/  31.2 GB · 77%  junk`. Press `g` to jump straight there.
+- **Labels everything.** Each item is tagged `junk`, `unused`, `system` or left as yours, with a one-line reason: *rebuilds with npm install · not touched in 7 months*, *installer · not needed once installed*, *screen capture from 3 weeks ago*.
+- **Shows when you last used it.** Last-opened dates come from Spotlight, so an app you haven't opened in two years stands out.
+- **Clears safely.** Caches and the Trash are cleared for good; everything else goes to the Trash so you can get it back. Nothing is removed without a second keypress.
+- **Feels like a terminal tool.** One monospace font, keyboard first, mouse optional, with a live dot-matrix disk meter drawn in real pixels.
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/govijr/fix-storage/main/install.sh | sh
+```
+
+The installer puts the app in `~/.fix-storage` and links the `fix-storage` command into `~/.local/bin`. It needs no `sudo`.
+
+**Requirements**
+
+- macOS (Apple silicon or Intel)
+- Node.js 20.11 or newer (`brew install node`)
+- For the graphical view: a terminal with the kitty graphics protocol, such as [Ghostty](https://ghostty.org), [kitty](https://sw.kovidgoyal.net/kitty/), [WezTerm](https://wezfurlong.org/wezterm/) or iTerm2. Other terminals get a character-only view.
+
+<details>
+<summary>Other install options</summary>
+
+```bash
+# A specific version
+curl -fsSL https://raw.githubusercontent.com/govijr/fix-storage/main/install.sh | sh -s -- --version 0.2.0
+
+# Somewhere else
+curl -fsSL https://raw.githubusercontent.com/govijr/fix-storage/main/install.sh | FIX_STORAGE_HOME=~/apps/fix-storage FIX_STORAGE_BIN=~/bin sh
+
+# From source
+git clone https://github.com/govijr/fix-storage && cd fix-storage
+npm install && npm start
+```
+
+</details>
+
+## Usage
+
+```bash
+fix-storage              # scan your disk and open the interactive view
+fix-storage --dry-run    # same, but deleting only pretends
+fix-storage --demo       # a made-up disk, to try the interface; reads and deletes nothing
+fix-storage --plain      # print a text summary and exit
+fix-storage --json       # print the summary as JSON and exit
+```
+
+> [!TIP]
+> Give your terminal **Full Disk Access** (System Settings → Privacy & Security → Full Disk Access) so the scan can read Mail, Messages, Safari and other protected folders. Without it, those folders are counted under *System data*.
+
+### Keys
+
+| Key | In the category list | In a folder |
+| --- | --- | --- |
+| `↑` `↓` / `j` `k` | pick a category | move |
+| `→` / `Enter` | look inside | open the folder |
+| `←` / `Esc` | | go up a level |
+| `g` | | jump to the culprit |
+| `f` | show only junk and unused | show only junk and unused |
+| `o` / `Space` | | reveal in Finder |
+| `⌫` / `d` | | move to Trash, or delete for caches and Trash (press twice) |
+| `c` | clear all caches / empty the Trash (press twice) | |
+| `Tab` | switch panes | switch panes |
+| `r` / `q` | rescan / quit | rescan / quit |
+
+Everything is clickable too: categories, the disk meter, rows, the breadcrumb and every action.
+
+## How it decides
+
+### Labels
+
+| Label | Meaning | Examples |
+| --- | --- | --- |
+| `junk` | Rebuilds by itself or is a leftover. Removing it loses nothing. | `node_modules`, `.next`, `__pycache__`, Pods, Xcode DerivedData, iOS DeviceSupport, `.dmg`/`.pkg` installers, caches, the Trash |
+| `unused` | Probably not needed, but your call. | build output, `.venv`, old simulators, Xcode archives, iPhone backups, archives in Downloads, screen recordings older than two weeks, anything not opened in a year |
+| `system` | A tool manages it; removing it by hand breaks the tool. The reason says which command to use instead. | Docker's disk image, Ollama models, Homebrew |
+| *(none)* | Yours and in use. | everything else |
+
+The rules live in [`src/core/classify.ts`](src/core/classify.ts). They are deliberately conservative; pull requests with new patterns are very welcome.
+
+### Culprits
+
+For a folder, fix-storage runs one `du` pass over it, then follows the biggest child down for as long as that child holds more than half of its parent. It stops at things that are one unit to you, like `node_modules`, `.app` bundles or a Photos library, and ends at a single file if one file is most of the folder. When no one thing dominates, it shows the three biggest instead. Sizes measured along the way are reused, so opening those folders afterwards is instant.
+
+### What it will and won't remove
+
+- **Caches and Trash** items are deleted for good. Apps rebuild caches when they need them.
+- **Everything else** is moved to the Trash (with macOS's own `trash` command, or Finder on older systems), so you can drag it back out. The space comes back once you empty the Trash.
+- **Never removed:** System data, anything under `/System` or `/private`, your Keychains, Preferences, Mail, Messages, Photos and Safari data, the top-level folders the scan measures, and anything outside them.
+- `--dry-run` and `--demo` never touch the disk.
+
+## Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/govijr/fix-storage/main/install.sh | sh -s -- --uninstall
+```
+
+## Development
+
+```bash
+git clone https://github.com/govijr/fix-storage && cd fix-storage
+npm install
+npm run demo        # build and open the demo disk
+npm run typecheck
+```
+
+The interface is React rendered by [pixel](https://www.npmjs.com/package/@zenbu-labs/pixel), which draws real pixels into terminals that support the kitty graphics protocol.
+
+```
+src/
+  main.tsx          entry point and key handling
+  plain.ts          --plain / --json output
+  core/
+    scan.ts         measures the disk with du
+    categories.ts   which folders count toward which category
+    classify.ts     junk / unused / system labels and their reasons
+    browse.ts       folder listing, culprits, last-used dates, reveal, trash
+    clean.ts        clearing a whole category
+    demo.ts         the made-up demo disk
+  ui/
+    app.tsx         the interface
+    bar.ts          the dot-matrix disk meter
+    store.ts        app state and actions
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to propose changes and cut a release.
+
+## License
+
+[MIT](LICENSE)
