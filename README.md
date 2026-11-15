@@ -9,9 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
 
-<!-- Add a screenshot or recording at docs/screenshot.png and uncomment:
-<img src="docs/screenshot.png" alt="fix-storage showing a dot-matrix disk meter, categories, and a folder's biggest culprit" width="900">
--->
+<img width="3344" height="2160" alt="image" src="https://github.com/user-attachments/assets/bbd9ade2-e996-4e2f-9979-ff73b57738f1" />
 
 </div>
 
