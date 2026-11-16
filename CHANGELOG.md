@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- The installer now checks the downloaded package against the release's published `.sha256` and stops on a mismatch.
+
 ## [0.1.0] - 2026-11-14
 
 ### Added

@@ -58,20 +58,52 @@ check_node() {
   fi
 }
 
+# The newest release's version. Resolved once, so the package and its
+# checksum come from the same release even if a new one is published meanwhile.
+latest_version() {
+  url="$(curl -fsSLI --retry 3 -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")" ||
+    fail "could not reach https://github.com/$REPO/releases/latest"
+  tag="${url##*/}"
+  case "$tag" in
+    v[0-9]*) printf '%s' "${tag#v}" ;;
+    *) fail "no release found at https://github.com/$REPO/releases (latest resolved to $url)" ;;
+  esac
+}
+
 tarball_url() {
   if [ -n "${FIX_STORAGE_TARBALL:-}" ]; then
     printf '%s' "$FIX_STORAGE_TARBALL"
-  elif [ -n "$VERSION" ]; then
-    printf 'https://github.com/%s/releases/download/v%s/fix-storage.tgz' "$REPO" "${VERSION#v}"
   else
-    printf 'https://github.com/%s/releases/latest/download/fix-storage.tgz' "$REPO"
+    printf 'https://github.com/%s/releases/download/v%s/fix-storage.tgz' "$REPO" "${VERSION#v}"
   fi
+}
+
+# Checks a download against the .sha256 file published next to it. Releases
+# always publish one, so for them a missing checksum is an error; a custom
+# FIX_STORAGE_TARBALL URL is checked only when it has one.
+verify() {
+  file="$1"
+  url="$2"
+  if ! curl -fsL --retry 3 -o "$file.sha256" "$url.sha256"; then
+    [ -n "${FIX_STORAGE_TARBALL:-}" ] || fail "could not download the checksum $url.sha256"
+    warn "no checksum at $url.sha256; installing unverified"
+    return 0
+  fi
+  expected="$(cut -d' ' -f1 <"$file.sha256")"
+  actual="$(shasum -a 256 "$file" | cut -d' ' -f1)"
+  [ "$expected" = "$actual" ] || fail "checksum mismatch for $url
+       expected $expected
+       got      $actual"
+  step "checksum verified"
 }
 
 install() {
   [ "$(uname -s)" = "Darwin" ] || fail "fix-storage is for macOS only."
   check_node
 
+  if [ -z "$VERSION" ] && [ -z "${FIX_STORAGE_TARBALL:-}" ]; then
+    VERSION="$(latest_version)"
+  fi
   source="$(tarball_url)"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT INT TERM
@@ -82,6 +114,7 @@ install() {
       curl -fsSL --retry 3 -o "$tmp/fix-storage.tgz" "$source" ||
         fail "could not download $source
        Check the version exists at https://github.com/$REPO/releases"
+      verify "$tmp/fix-storage.tgz" "$source"
       ;;
     *)
       [ -f "$source" ] || fail "no such file: $source"
