@@ -28,10 +28,11 @@ body:
     validations:
       required: true
   - type: input
-    id: macos
+    id: os
     attributes:
-      label: macOS version and chip
-      placeholder: macOS 15.2, Apple M2
+      label: OS version and chip
+      description: On Linux, also the distribution, and the output of `fix-storage --drives` if it is about drives.
+      placeholder: macOS 15.2, Apple M2 / Ubuntu 24.04, x86_64
     validations:
       required: true
   - type: input

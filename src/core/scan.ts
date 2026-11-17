@@ -1,8 +1,10 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promises as fsp } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { CATEGORIES, roots, type CategoryId, type Root } from "./categories";
+import { basename, join } from "node:path";
+import { CATEGORIES, type CategoryId, type Root } from "./categories";
+import type { Drive } from "./drives";
+import type { Layout } from "./layout";
+import { IS_MAC } from "./platform";
 
 export interface Item {
   path: string;
@@ -24,7 +26,7 @@ export interface ScanSnapshot {
   items: Record<CategoryId, Item[]>;
   /** Path being measured right now. */
   current: string;
-  /** Folders macOS would not let this process read. */
+  /** Folders this process may not read. */
   blocked: string[];
 }
 
@@ -50,16 +52,27 @@ export function emptySnapshot(): ScanSnapshot {
   };
 }
 
-export async function diskSpace(): Promise<{ total: number; available: number }> {
-  for (const path of ["/System/Volumes/Data", "/"]) {
+export interface Space {
+  total: number;
+  /** Free bytes this account can use. */
+  available: number;
+  /** Bytes in use. On Linux this leaves out the blocks reserved for root, the way df counts. */
+  used: number;
+}
+
+export async function diskSpace(drive?: Drive): Promise<Space> {
+  const paths = IS_MAC || !drive ? ["/System/Volumes/Data", "/"] : [drive.mount];
+  for (const path of paths) {
     try {
       const s = await fsp.statfs(path);
-      return { total: s.blocks * s.bsize, available: s.bavail * s.bsize };
+      const total = s.blocks * s.bsize;
+      const available = s.bavail * s.bsize;
+      return { total, available, used: IS_MAC ? total - available : (s.blocks - s.bfree) * s.bsize };
     } catch {
       // try the next one
     }
   }
-  return { total: 0, available: 0 };
+  return { total: 0, available: 0, used: 0 };
 }
 
 function denied(error: unknown): boolean {
@@ -88,10 +101,11 @@ export function du(path: string, children: Set<ChildProcess>): Promise<DuResult>
     // A folder guarded by a macOS privacy prompt (Music, TV, Photos) makes du
     // wait for an answer that may never come. A du that has used no CPU time
     // between two checks is waiting like that: give up on it and report the
-    // folder as unreadable.
+    // folder as unreadable. Linux has no such prompts, and its ps counts CPU
+    // time in whole seconds, so a du busy reading a slow disk would look stuck.
     let stalled = false;
     let lastCpu = "";
-    const watchdog = setInterval(() => {
+    const check = () => {
       if (child.pid === undefined) return;
       execFile("ps", ["-o", "cputime=", "-p", String(child.pid)], (error, stdout) => {
         const cpu = stdout.trim();
@@ -102,7 +116,8 @@ export function du(path: string, children: Set<ChildProcess>): Promise<DuResult>
         }
         lastCpu = cpu;
       });
-    }, STALL_CHECK_MS);
+    };
+    const watchdog = IS_MAC ? setInterval(check, STALL_CHECK_MS) : undefined;
 
     const finish = () => {
       clearInterval(watchdog);
@@ -120,19 +135,17 @@ export function du(path: string, children: Set<ChildProcess>): Promise<DuResult>
 
 interface Unit {
   path: string;
-  category: Exclude<CategoryId, "system">;
+  category: CategoryId;
 }
 
 export interface ScanOptions {
-  home?: string;
   /** How many folders to measure at once. */
   concurrency?: number;
   /** Minimum milliseconds between onUpdate calls. */
   throttleMs?: number;
 }
 
-export function startScan(onUpdate: (snapshot: ScanSnapshot) => void, options: ScanOptions = {}): ScanHandle {
-  const home = options.home ?? homedir();
+export function startScan(layout: Layout, onUpdate: (snapshot: ScanSnapshot) => void, options: ScanOptions = {}): ScanHandle {
   const concurrency = options.concurrency ?? 6;
   const throttleMs = options.throttleMs ?? 40;
 
@@ -154,11 +167,11 @@ export function startScan(onUpdate: (snapshot: ScanSnapshot) => void, options: S
   };
 
   const run = async (): Promise<ScanSnapshot> => {
-    const space = await diskSpace();
+    const space = await diskSpace(layout.drive);
     snap.total = space.total;
     snap.available = space.available;
 
-    const all = roots(home);
+    const all = layout.roots;
     const rootPaths = new Set(all.map((r) => r.path));
     const holdsRoot = (path: string) => {
       const prefix = path + "/";
@@ -170,31 +183,42 @@ export function startScan(onUpdate: (snapshot: ScanSnapshot) => void, options: S
     // Lists a folder, queueing each subfolder for du and adding loose files
     // straight away. Subfolders that hold another root are opened instead of
     // measured whole, so the inner root is not counted twice.
-    const expand = async (path: string, category: Unit["category"], hidden?: Unit["category"]): Promise<void> => {
+    const addFile = async (path: string, category: CategoryId) => {
+      try {
+        const stat = await fsp.lstat(path);
+        const bytes = stat.blocks * 512;
+        add(category, bytes);
+        if (bytes > 0) snap.items[category].push({ path, size: bytes, dir: false });
+      } catch {
+        // vanished or unreadable; nothing to count
+      }
+    };
+
+    // Unreadable system folders are expected; they count as System data anyway.
+    const report = (path: string, category: CategoryId) => {
+      if (category !== "system" && basename(path) !== "lost+found") snap.blocked.push(path);
+    };
+
+    const expand = async (path: string, category: CategoryId, hidden?: CategoryId): Promise<void> => {
       if (cancelled) return;
       let entries;
       try {
         entries = await fsp.readdir(path, { withFileTypes: true });
       } catch (error) {
-        if (denied(error)) snap.blocked.push(path);
+        // A root can be a single file, like a swap file.
+        if ((error as NodeJS.ErrnoException).code === "ENOTDIR") await addFile(path, category);
+        else if (denied(error)) report(path, category);
         return;
       }
       for (const entry of entries) {
         const child = join(path, entry.name);
-        if (rootPaths.has(child)) continue;
+        if (rootPaths.has(child) || layout.skip(child)) continue;
         const kind = hidden !== undefined && entry.name.startsWith(".") ? hidden : category;
         if (entry.isDirectory()) {
           if (holdsRoot(child)) await expand(child, kind);
           else units.push({ path: child, category: kind });
         } else {
-          try {
-            const stat = await fsp.lstat(child);
-            const bytes = stat.blocks * 512;
-            add(kind, bytes);
-            if (bytes > 0) snap.items[kind].push({ path: child, size: bytes, dir: false });
-          } catch {
-            // vanished or unreadable; nothing to count
-          }
+          await addFile(child, kind);
         }
       }
     };
@@ -217,7 +241,7 @@ export function startScan(onUpdate: (snapshot: ScanSnapshot) => void, options: S
         if (cancelled) return;
         add(unit.category, result.bytes);
         if (result.bytes > 0) snap.items[unit.category].push({ path: unit.path, size: result.bytes, dir: true });
-        if (result.denied && result.bytes < 1024 * 1024) snap.blocked.push(unit.path);
+        if (result.denied && result.bytes < 1024 * 1024) report(unit.path, unit.category);
         emit();
       }
     };
@@ -226,16 +250,15 @@ export function startScan(onUpdate: (snapshot: ScanSnapshot) => void, options: S
     for (const list of Object.values(snap.items)) list.sort((a, b) => b.size - a.size);
 
     // Whatever the disk reports as used beyond what was measured is the
-    // system's: macOS itself, snapshots, swap, and folders this process may
+    // system's: the OS itself, snapshots, swap, and folders this process may
     // not read.
-    const after = await diskSpace();
+    const after = await diskSpace(layout.drive);
     if (after.total > 0) {
       snap.total = after.total;
       snap.available = after.available;
-      const used = after.total - after.available;
-      const measured = snap.used;
-      snap.sizes.system = Math.max(0, used - measured);
-      snap.used = Math.max(used, measured);
+      const others = snap.used - snap.sizes.system;
+      snap.sizes.system = Math.max(snap.sizes.system, after.used - others);
+      snap.used = Math.max(after.used, snap.used);
     }
     snap.current = "";
     snap.phase = "done";
@@ -253,10 +276,10 @@ export function startScan(onUpdate: (snapshot: ScanSnapshot) => void, options: S
 }
 
 /** Re-measures one category after something was deleted from it. */
-export async function measure(category: Exclude<CategoryId, "system">, home: string = homedir()): Promise<number> {
+export async function measure(category: CategoryId, layout: Layout): Promise<number> {
   const children = new Set<ChildProcess>();
   let total = 0;
-  for (const root of roots(home)) {
+  for (const root of layout.roots) {
     if (root.category !== category) continue;
     total += (await du(root.path, children)).bytes;
   }

@@ -1,10 +1,13 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promises as fsp } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { roots, type CategoryId } from "./categories";
+import { pathToFileURL } from "node:url";
+import type { CategoryId } from "./categories";
 import { isWhole, type Usage } from "./classify";
+import { homeTrash, type Layout } from "./layout";
+import { IS_MAC, OS_NAME } from "./platform";
 import { du, type Item } from "./scan";
+import { forgetTrashInfo, trashLinux } from "./trash";
 
 export interface ListHandle {
   cancel(): void;
@@ -30,9 +33,14 @@ export function forgetAllSizes() {
 /**
  * Measures everything directly inside a folder: loose files straight away,
  * subfolders with du, a few at a time. Calls back with the list so far,
- * largest first, and once more with done = true.
+ * largest first, and once more with done = true. Folders where another drive
+ * is mounted are left out: they are not on this drive.
  */
-export function listFolder(path: string, onUpdate: (items: Item[], done: boolean, current: string) => void): ListHandle {
+export function listFolder(
+  path: string,
+  onUpdate: (items: Item[], done: boolean, current: string) => void,
+  foreign: (path: string) => boolean = () => false,
+): ListHandle {
   const children = new Set<ChildProcess>();
   let cancelled = false;
   const items: Item[] = [];
@@ -50,7 +58,7 @@ export function listFolder(path: string, onUpdate: (items: Item[], done: boolean
     for (const entry of entries) {
       const child = join(path, entry.name);
       if (entry.isDirectory()) {
-        folders.push(child);
+        if (!foreign(child)) folders.push(child);
         continue;
       }
       try {
@@ -193,9 +201,10 @@ async function looseFiles(path: string): Promise<Item[]> {
 
 /**
  * Last-opened dates from Spotlight where it has one (apps, documents, media),
- * otherwise the modification time.
+ * otherwise the modification time. Linux has no Spotlight: see statUsage.
  */
 export async function usage(paths: string[]): Promise<Map<string, Usage>> {
+  if (!IS_MAC) return statUsage(paths);
   const result = new Map<string, Usage>();
   for (let i = 0; i < paths.length; i += 40) {
     const batch = paths.slice(i, i + 40);
@@ -218,6 +227,26 @@ export async function usage(paths: string[]): Promise<Map<string, Usage>> {
       } catch {
         // vanished
       }
+    }
+  }
+  return result;
+}
+
+/**
+ * Linux: a file's access time when it is newer than its modification time,
+ * which means it was opened since it last changed (with the default relatime
+ * mount option, to within a day). Folders use their modification time: every
+ * du pass reads them, so their access times say nothing.
+ */
+async function statUsage(paths: string[]): Promise<Map<string, Usage>> {
+  const result = new Map<string, Usage>();
+  for (const path of paths) {
+    try {
+      const stat = await fsp.stat(path);
+      const opened = !stat.isDirectory() && stat.atimeMs > stat.mtimeMs + 60_000;
+      result.set(path, opened ? { at: stat.atimeMs, kind: "opened" } : { at: stat.mtimeMs, kind: "changed" });
+    } catch {
+      // vanished
     }
   }
   return result;
@@ -286,11 +315,38 @@ export function demoUsage(path: string, now: number = Date.now()): Usage {
 // ---- acting on one item -------------------------------------------------
 
 /** Folders whose removal would break the system or the user's account, whatever is inside. */
-function protectedPaths(home: string): Set<string> {
+function protectedPaths(layout: Layout): Set<string> {
+  const { home } = layout;
+  const shared = [...layout.roots.map((r) => r.path), ...layout.drive.mounts.map((m) => m.point), "/", home];
+  if (!IS_MAC) {
+    const h = (...parts: string[]) => join(home, ...parts);
+    return new Set(
+      [
+        ...shared,
+        "/home",
+        h(".local"),
+        h(".local", "share"),
+        h(".config"),
+        dirname(homeTrash(home)),
+        homeTrash(home),
+        h(".local", "share", "keyrings"),
+        h(".local", "share", "kwalletd"),
+        h(".gnupg"),
+        h(".ssh"),
+        h(".pki"),
+        h(".password-store"),
+        h(".mozilla"),
+        h(".thunderbird"),
+        h(".config", "google-chrome"),
+        h(".config", "chromium"),
+        h(".config", "BraveSoftware"),
+      ].map((p) => resolve(p)),
+    );
+  }
   const lib = (name: string) => join(home, "Library", name);
   return new Set(
     [
-      ...roots(home).map((r) => r.path),
+      ...shared,
       "/",
       "/System",
       "/Library",
@@ -299,7 +355,6 @@ function protectedPaths(home: string): Set<string> {
       "/usr/local/lib",
       "/opt/homebrew/bin",
       "/opt/homebrew/lib",
-      home,
       join(home, "Library"),
       lib("Keychains"),
       lib("Preferences"),
@@ -315,16 +370,36 @@ function protectedPaths(home: string): Set<string> {
   );
 }
 
+/**
+ * Linux folders a package manager or the system owns. Anything inside them is
+ * removed with that tool, never by hand.
+ */
+const LINUX_MANAGED = [
+  "/usr", "/etc", "/boot", "/efi", "/var", "/opt", "/root", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32",
+  "/proc", "/sys", "/dev", "/snap", "/nix", "/.snapshots", "/timeshift", "/swapfile", "/swap", "/home/linuxbrew",
+];
+
 /** Why an item cannot be removed, or null when it can. */
-export function cannotRemove(path: string, home: string = homedir()): string | null {
+export function cannotRemove(path: string, layout: Layout): string | null {
   if (!path.startsWith("/")) return "Not a real path.";
-  const target = resolve(path);
-  if (protectedPaths(home).has(target)) return "macOS or your account needs this folder.";
-  if (target.startsWith("/System/") || target.startsWith("/private/")) return "macOS manages this.";
-  const known = roots(home).some((root) => target.startsWith(resolve(root.path) + sep));
+  if (layout.lookOnly) return capitalize(layout.lookOnly) + ".";
+  // Judge a second view of a folder (a bind mount) by the folder it shows.
+  const target = layout.canonical(resolve(path));
+  if (protectedPaths(layout).has(target)) return `${OS_NAME} or your account needs this folder.`;
+  if (IS_MAC) {
+    if (target.startsWith("/System/") || target.startsWith("/private/")) return "macOS manages this.";
+  } else {
+    if (LINUX_MANAGED.some((dir) => target.startsWith(dir + "/"))) return "Linux or a package manager manages this.";
+    const flatpak = join(dirname(homeTrash(layout.home)), "flatpak");
+    if (target.startsWith(flatpak + "/")) return "Flatpak manages this · use flatpak uninstall.";
+    if (layout.foreign(target)) return "Another drive is mounted here.";
+  }
+  const known = layout.roots.some((root) => target.startsWith(resolve(root.path) + sep));
   if (!known) return "Outside the folders this tool looks at.";
   return null;
 }
+
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /** True when the item lives where permanent deletion is fine: caches and the Trash. */
 export function deletesForGood(category: CategoryId): boolean {
@@ -340,8 +415,12 @@ function run(file: string, args: string[]): Promise<void> {
   });
 }
 
-/** Moves a file or folder to the Trash, where it can be put back from Finder. */
-export async function moveToTrash(path: string): Promise<void> {
+/**
+ * Moves a file or folder to the Trash, where it can be put back from Finder or
+ * the file manager, and returns roughly where it went.
+ */
+export async function moveToTrash(path: string, layout: Layout): Promise<string> {
+  if (!IS_MAC) return trashLinux(path, layout.home);
   try {
     await fsp.access("/usr/bin/trash");
     await run("/usr/bin/trash", [path]);
@@ -357,18 +436,50 @@ export async function moveToTrash(path: string): Promise<void> {
       path,
     ]);
   }
+  return trashPathFor(path, layout);
+}
+
+/** Where moving an item to the Trash puts it, near enough to list it there (and for dry runs). */
+export function trashPathFor(path: string, layout: Layout): string {
+  if (IS_MAC) return join(layout.home, ".Trash", basename(path));
+  if (layout.drive.home) return join(homeTrash(layout.home), "files", basename(path));
+  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  return join(layout.drive.mount, `.Trash-${uid}`, "files", basename(path));
 }
 
 /** Deletes for good. Only used for caches and things already in the Trash. */
-export async function deleteForGood(path: string): Promise<void> {
+export async function deleteForGood(path: string, category: CategoryId): Promise<void> {
   await fsp.rm(path, { recursive: true, force: true });
+  if (!IS_MAC && category === "trash") await forgetTrashInfo(path);
 }
 
-/** Opens a Finder window with the item selected. */
-export function reveal(path: string): Promise<void> {
-  return run("open", ["-R", path]);
-}
-
-export function trashPathFor(path: string, home: string = homedir()): string {
-  return join(home, ".Trash", basename(path));
+/**
+ * Shows the item in Finder, or in the Linux file manager with the item
+ * selected (Nautilus, Dolphin, Nemo, Thunar), else just opens its folder.
+ */
+export async function reveal(path: string): Promise<void> {
+  if (IS_MAC) return run("open", ["-R", path]);
+  const uri = pathToFileURL(path).href.replace(/,/g, "%2C");
+  try {
+    await run("dbus-send", [
+      "--session",
+      "--print-reply",
+      "--reply-timeout=3000",
+      "--dest=org.freedesktop.FileManager1",
+      "--type=method_call",
+      "/org/freedesktop/FileManager1",
+      "org.freedesktop.FileManager1.ShowItems",
+      `array:string:${uri}`,
+      "string:",
+    ]);
+  } catch {
+    await new Promise<void>((done, fail) => {
+      const child = spawn("xdg-open", [dirname(path)], { detached: true, stdio: "ignore" });
+      child.on("error", fail);
+      child.on("spawn", () => {
+        child.unref();
+        done();
+      });
+    });
+  }
 }
