@@ -1,9 +1,14 @@
 /**
- * The part of pixel the interface uses. pixel is an optional dependency, as it
- * has no Windows build, so its types are declared here rather than imported:
- * the code still compiles where pixel is not installed. They follow pixel's own.
+ * The part of pixel the interface uses, and where it comes from: pixel itself on
+ * macOS and Linux, and on Windows, where pixel has no build, fix-storage's own
+ * character renderer in ../tui, which draws the same interface into the cells
+ * of the terminal.
+ *
+ * The types are declared here rather than imported from pixel, so the code
+ * still compiles where pixel is not installed. They follow pixel's own.
  */
 import type { ForwardRefExoticComponent, ReactNode, RefAttributes, RefObject } from "react";
+import { IS_WINDOWS } from "../core/platform";
 
 export type Rgba = [number, number, number, number];
 export type Color = Rgba | [number, number, number] | string;
@@ -96,6 +101,8 @@ export interface RootInfo {
   renderer?: "kitty" | "cells";
   /** Height of a line of text, in pixels. */
   basePx: number;
+  /** How often animations should draw a frame, when the screen shows fewer than 60 a second. */
+  frameMs?: number;
 }
 
 export interface Root {
@@ -126,7 +133,7 @@ interface Runtime {
   createRoot(options?: RootOptions): Root;
 }
 
-// Loaded by name, so nothing needs pixel until the interactive view starts.
-const runtime: Runtime = require("@zenbu-labs/pixel");
+// Loaded by name so that neither has to be installed for the other to work.
+const runtime: Runtime = IS_WINDOWS ? require("../tui") : require("@zenbu-labs/pixel");
 
 export const { Box, Text, useRect, createRoot } = runtime;

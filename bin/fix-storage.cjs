@@ -16,10 +16,11 @@ const HELP = `fix-storage: see what is filling your ${drives ? "disks" : "Mac's 
 
 Usage: fix-storage [options]
 
-  (no options)   ${windows
-    ? `Print a text summary. The interactive view is not on
-                 Windows yet.`
-    : `Open the interactive view. Needs a terminal with kitty
+  (no options)   Open the interactive view. ${windows
+    ? `The disk meter is drawn as an image in
+                 terminals that show Sixel images (Windows Terminal 1.22 or
+                 newer, WezTerm); others get a simpler one.`
+    : `Needs a terminal with kitty
                  graphics (Ghostty, kitty, iTerm2, WezTerm); other terminals
                  get a simpler character view.`}
   --dry-run      Interactive view, but clearing only pretends: nothing is deleted.
@@ -57,19 +58,16 @@ if (unknown) {
   process.exit(2);
 }
 
-// pixel, which draws the interactive view, has no Windows build: Windows gets the summary.
-const textModes = ["--plain", "--json", "--drives"];
-if (windows && process.stdout.isTTY && !args.some((arg) => textModes.includes(arg))) {
-  process.stderr.write("fix-storage: the interactive view is not on Windows yet, so here is the summary.\n\n");
-}
-
-if (args.includes("--plain") || args.includes("--json") || args.includes("--drives") || !process.stdout.isTTY || windows) {
+if (args.includes("--plain") || args.includes("--json") || args.includes("--drives") || !process.stdout.isTTY) {
   require(path.join(appDir, "dist", "plain.js"))
     .runPlain(args)
     .catch((error) => {
       process.stderr.write(`fix-storage: ${error && error.message ? error.message : error}\n`);
       process.exit(1);
     });
+} else if (windows) {
+  // pixel has no Windows build; fix-storage draws the same interface itself.
+  require(path.join(appDir, "dist", "main.js"));
 } else {
   const pixel = require.resolve("@zenbu-labs/pixel/package.json", { paths: [appDir] });
   const bin = path.join(path.dirname(pixel), "dist", "bin.js");

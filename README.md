@@ -56,7 +56,7 @@ npm install -g https://github.com/govijr/fix-storage/releases/latest/download/fi
 - Node.js 20.11 or newer (`brew install node`, your distribution's `nodejs` and `npm` packages, or `winget install OpenJS.NodeJS.LTS`)
 - On Linux: `unzip`, used once to unpack the graphics runtime. The runtime is Electron-based, so it needs the libraries any desktop already has; on a bare server use `--plain`.
 - For the graphical view: a terminal with the kitty graphics protocol, such as [Ghostty](https://ghostty.org), [kitty](https://sw.kovidgoyal.net/kitty/), [WezTerm](https://wezfurlong.org/wezterm/) or iTerm2. Other terminals get a character-only view.
-- On Windows, `fix-storage` prints the text summary for now (see [Windows](#windows)); any terminal works.
+- On Windows, any terminal works. In [Windows Terminal](https://aka.ms/terminal) 1.22 or newer, or WezTerm, the disk meter is drawn in real pixels too.
 
 <details>
 <summary>Other install options</summary>
@@ -109,10 +109,10 @@ fix-storage --plain --drive 2    # text summary of the second drive
 | `←` / `Esc` | | go up a level |
 | `g` | | jump to the culprit |
 | `f` | show only junk and unused | show only junk and unused |
-| `o` / `Space` | | reveal in Finder, or in the file manager on Linux |
-| `⌫` / `d` | | move to Trash, or delete for caches and Trash (press twice) |
-| `c` | clear all caches / empty the Trash (press twice) | |
-| `v` / `1`–`9` | next drive / that drive (Linux) | next drive / that drive (Linux) |
+| `o` / `Space` | | reveal in Finder, in the file manager on Linux, or in File Explorer on Windows |
+| `⌫` / `Del` / `d` | | move to Trash, or delete for caches and Trash (press twice) |
+| `c` | clear all caches / empty the Trash or Recycle Bin (press twice) | |
+| `v` / `1`–`9` | next drive / that drive (Linux, Windows) | next drive / that drive (Linux, Windows) |
 | `Tab` | switch panes | switch panes |
 | `r` / `q` | rescan / quit | rescan / quit |
 
@@ -142,9 +142,7 @@ fix-storage scans each local drive, `C:` first, and leaves out network drives. S
 | USB drives and memory cards | What is on it. | No, look only: Windows keeps no Recycle Bin on them, so anything removed would be gone for good. |
 | Another copy of Windows | What is on it. | No, look only. Clean it up from that Windows. |
 
-Folder sizes come from Windows' own directory listings rather than opening every file, which keeps a full scan of `C:` to well under a minute.
-
-The interactive view, where things are removed, is not on Windows yet: the graphics runtime it uses has no Windows build. Until it is, `fix-storage` prints the summary, and `--plain`, `--json`, `--drives` and `--demo` work as everywhere else. The removal rules above are already in place for it.
+The interface is the same one as on macOS, drawn by fix-storage itself into the terminal's character cells, because the graphics runtime it uses elsewhere has no Windows build. Folder sizes come from Windows' own directory listings rather than opening every file, which keeps a full scan of `C:` to well under a minute.
 
 ## How it decides
 
@@ -193,7 +191,7 @@ npm run demo        # build and open the demo disk
 npm run typecheck
 ```
 
-The interface is React rendered by [pixel](https://www.npmjs.com/package/@zenbu-labs/pixel), which draws real pixels into terminals that support the kitty graphics protocol. pixel has no Windows build, so there `npm install` skips it and only the text modes run; `npm run plain -- --demo` there shows a made-up Windows disk.
+The interface is React rendered by [pixel](https://www.npmjs.com/package/@zenbu-labs/pixel), which draws real pixels into terminals that support the kitty graphics protocol. pixel has no Windows build, so there `npm install` skips it and fix-storage draws the same interface with its own renderer in `src/tui`. Trying that renderer, and anything else Windows does, needs a Windows machine; `npm run demo` there opens a made-up Windows disk.
 
 ```
 src/
@@ -217,7 +215,8 @@ src/
     app.tsx         the interface
     bar.ts          the dot-matrix disk meter
     store.ts        app state and actions
-    runtime.ts      what the interface uses of pixel
+    runtime.ts      what the interface uses of pixel, and where it comes from
+  tui/              the character renderer for Windows: layout, painting, the terminal, Sixel images
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to propose changes and cut a release.

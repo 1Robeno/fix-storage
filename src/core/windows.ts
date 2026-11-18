@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promises as fsp } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -250,4 +250,44 @@ export async function recycle(path: string): Promise<void> {
   if (result !== "ok") throw new Error(`windows could not recycle it (${result})`);
   // The shell reports success for a path that is already gone; make sure it really moved.
   if (await exists(path)) throw new Error("it is still there; it may be open in another app");
+}
+
+// ---- the console ----------------------------------------------------------------
+
+const MOUSE_INPUT = `$ErrorActionPreference = 'Stop'
+$console = Add-Type -PassThru -Name Console -Namespace FixStorage -MemberDefinition @'
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+public static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr handle, out uint mode);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr handle, uint mode);
+'@
+# The console this process shares with fix-storage: read and write (written in
+# decimal, as PowerShell reads 0xC0000000 as a negative number), shared, open existing.
+$handle = $console::CreateFileW('CONIN$', 3221225472, 3, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
+$mode = 0
+# ENABLE_VIRTUAL_TERMINAL_INPUT
+if ($console::GetConsoleMode($handle, [ref]$mode)) { [void]$console::SetConsoleMode($handle, $mode -bor 0x200) }
+`;
+
+/**
+ * Lets mouse clicks and the wheel reach fix-storage. Node reads the Windows
+ * console as key presses only, and Windows Terminal sends its mouse reports
+ * only to a console in virtual terminal input mode, so a helper attached to
+ * the same console switches that on. Call it after raw mode is on; turning raw
+ * mode off sets the console back the way Node found it. `done` runs once the
+ * helper has finished, whether it worked or not.
+ */
+export function enableMouseInput(done: () => void): void {
+  try {
+    const encoded = Buffer.from(MOUSE_INPUT, "utf16le").toString("base64");
+    // Not windowsHide: that starts the helper on a hidden console of its own, and
+    // it would change that console instead of this one. Sharing a console opens no window.
+    spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], { stdio: "ignore" })
+      .on("error", done)
+      .on("exit", done)
+      .unref();
+  } catch {
+    // No PowerShell: the keyboard still does everything.
+    done();
+  }
 }

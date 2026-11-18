@@ -13,7 +13,7 @@ npm run typecheck
 
 To work against your real disk without risk, use `npm start -- --dry-run`. Clearing and deleting only pretend in that mode.
 
-You need macOS, Linux or Windows and Node.js 20.11+. On Linux, install `unzip` first, and if `npm install` fails with `EXDEV` (when `/tmp` is a tmpfs), run it as `TMPDIR=$PWD/.tmp npm install` after `mkdir .tmp`. For the graphical view, use a terminal with kitty graphics (Ghostty, kitty, WezTerm, iTerm2); `PIXEL_RENDERER=cells` forces the character view if you want to check that. On Windows, `npm install` skips pixel, which has no Windows build, so only the text modes run there.
+You need macOS, Linux or Windows and Node.js 20.11+. On Linux, install `unzip` first, and if `npm install` fails with `EXDEV` (when `/tmp` is a tmpfs), run it as `TMPDIR=$PWD/.tmp npm install` after `mkdir .tmp`. For the graphical view, use a terminal with kitty graphics (Ghostty, kitty, WezTerm, iTerm2); `PIXEL_RENDERER=cells` forces the character view if you want to check that. On Windows, `npm install` skips pixel, which has no Windows build, and the interface is drawn by fix-storage's own renderer in `src/tui`; Windows Terminal 1.22+ or WezTerm show the disk meter in pixels.
 
 ## Good first contributions
 

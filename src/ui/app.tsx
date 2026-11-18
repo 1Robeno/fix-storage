@@ -177,12 +177,12 @@ function Meter({ root, store, fs }: { root: Root; store: Store; fs: number }) {
       const moving = canvas.step((now - last) / 1000);
       last = now;
       idle = moving ? 0 : 6;
-    }, 16);
+    }, root.info.frameMs ?? 16);
     return () => {
       clearInterval(timer);
       surface.close();
     };
-  }, [canvas, store, surface]);
+  }, [canvas, store, surface, root]);
 
   return (
     <Box
