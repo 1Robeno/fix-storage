@@ -1,9 +1,10 @@
 {
   "name": "fix-storage",
   "version": "0.1.0",
-  "description": "See what is filling your Mac's disk, find the culprit, and clear what is safe to clear, from the terminal.",
+  "description": "See what is filling your disk on macOS or Linux, find the culprit, and clear what is safe to clear, from the terminal.",
   "keywords": [
     "macos",
+    "linux",
     "disk",
     "storage",
     "disk-usage",
@@ -64,7 +65,8 @@
     "node": ">=20.11"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "linux"
   ],
   "cpu": [
     "arm64",
