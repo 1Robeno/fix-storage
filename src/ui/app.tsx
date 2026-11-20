@@ -7,7 +7,6 @@ import { deletesForGood, type Culprit } from "../core/browse";
 import { classify, shortAge, type Verdict } from "../core/classify";
 import type { Clearable } from "../core/clean";
 import { capacity, gb, size, tilde } from "../core/format";
-import { IS_MAC, REVEAL_LABEL } from "../core/platform";
 import type { Item } from "../core/scan";
 import { BAR_ROWS, BarCanvas, HEADROOM_ROWS, type BarModel } from "./bar";
 import { MAX_ROWS, type AppState, type Store } from "./store";
@@ -213,32 +212,7 @@ function CellMeter({ state, fs }: { state: AppState; fs: number }) {
 
 // ---- top lines ----------------------------------------------------------------------
 
-/** The drives, the one on screen highlighted. Click one, or press v or its number, to switch. */
-function DriveTabs({ state, store, fs }: Ctx) {
-  const { drives } = state;
-  if (drives.length <= 1) {
-    return (
-      <T fs={fs} color={FAINT} style={{ margin: { left: ch(fs, 2) } }}>
-        {drives[0]?.name ?? (IS_MAC ? "Macintosh HD" : "")}
-      </T>
-    );
-  }
-  return (
-    <Box style={{ flexShrink: 0, margin: { left: ch(fs, 2) }, gap: ch(fs, 2) }}>
-      {drives.map((drive, i) => {
-        const on = i === state.drive;
-        return (
-          <T key={drive.id} fs={fs} bold={on} color={on ? FG : FAINT} onClick={on ? undefined : () => store.setDrive(i)}>
-            {drive.name}
-          </T>
-        );
-      })}
-    </Box>
-  );
-}
-
-function TopLine(ctx: Ctx) {
-  const { state, store, fs } = ctx;
+function TopLine({ state, store, fs }: Ctx) {
   const mode = store.options.demo ? "demo disk" : store.options.dryRun ? "dry run" : null;
   const { scan, action } = state;
   let status: ReactNode;
@@ -258,14 +232,9 @@ function TopLine(ctx: Ctx) {
     );
   } else {
     const hidden = scan.blocked.length;
-    const unmounted = state.unmounted.length;
     status = (
       <T fs={fs} color={FAINT} style={{ flexShrink: 1, ellipsis: true }}>
-        {hidden > 0
-          ? `${hidden} folders unreadable · ${IS_MAC ? "grant Full Disk Access" : "counted as system data"}`
-          : unmounted > 0
-            ? `${unmounted} ${unmounted === 1 ? "partition" : "partitions"} not mounted · fix-storage --drives`
-            : "scan complete"}
+        {hidden > 0 ? `${hidden} folders unreadable · grant Full Disk Access` : "scan complete"}
       </T>
     );
   }
@@ -273,9 +242,8 @@ function TopLine(ctx: Ctx) {
     <Box style={{ justifyContent: "space-between", gap: fs * 2, flexShrink: 0 }}>
       <Box style={{ flexShrink: 0 }}>
         <T fs={fs} bold>fix-storage</T>
-        <DriveTabs {...ctx} />
+        <T fs={fs} color={FAINT} style={{ margin: { left: ch(fs, 2) } }}>Macintosh HD</T>
         {mode ? <T fs={fs} color={AMBER} style={{ margin: { left: ch(fs, 2) } }}>{mode}</T> : null}
-        {state.layout?.lookOnly ? <T fs={fs} color={AMBER} style={{ margin: { left: ch(fs, 2) } }}>look only</T> : null}
       </Box>
       <Box style={{ flexShrink: 1, minWidth: 0, justifyContent: "end" }}>{status}</Box>
     </Box>
@@ -305,23 +273,9 @@ function Totals({ state, fs }: Ctx) {
         <T fs={fs}>{known ? pct(scan.used, scan.total) : "…"}</T>
         <T fs={fs} color={MUTED}>{" full"}</T>
       </Box>
-      {state.freed > 0 ? (
-        <T fs={fs} color={GREEN}>{`${gb(state.freed)} freed this session`}</T>
-      ) : !IS_MAC && state.drives[state.drive] ? (
-        <T fs={fs} color={FAINT} style={{ flexShrink: 1, ellipsis: true, margin: { left: ch(fs, 2) } }}>
-          {driveDetail(state)}
-        </T>
-      ) : null}
+      {state.freed > 0 ? <T fs={fs} color={GREEN}>{`${gb(state.freed)} freed this session`}</T> : null}
     </Box>
   );
-}
-
-/** "ext4 · /dev/nvme0n1p2 · games · /mnt/games" */
-function driveDetail(state: AppState): string {
-  const drive = state.drives[state.drive];
-  const parts = [drive.fstype, drive.device, drive.label, drive.mount !== drive.name ? drive.mount : ""];
-  if (drive.readOnly) parts.push("read-only");
-  return parts.filter(Boolean).join(" · ");
 }
 
 // ---- left column: categories ----------------------------------------------------------
@@ -353,18 +307,6 @@ function CategoryLine({ category, state, store, fs }: Ctx & { category: Category
 }
 
 function QuickWins({ state, store, fs }: Ctx) {
-  const lookOnly = state.layout?.lookOnly;
-  if (lookOnly) {
-    return (
-      <Box style={{ flexDirection: "column", gap: fs * 0.35 }}>
-        {lookOnly.split(" · ").map((line, i) => (
-          <T key={i} fs={fs} color={i === 0 ? AMBER : FAINT} style={{ wrap: true, flexShrink: 1 }}>
-            {line}
-          </T>
-        ))}
-      </Box>
-    );
-  }
   if (state.scan.phase !== "done") return <T fs={fs} color={FAINT}>looking for space you can get back…</T>;
   const ids = (["caches", "trash"] as Clearable[]).filter((id) => store.canClear(id) || state.action?.id === id);
   if (ids.length === 0) return <T fs={fs} color={FAINT}>nothing left that is safe to clear</T>;
@@ -618,7 +560,7 @@ function ItemDetails({ item, index, ...ctx }: Ctx & { item: Item; index: number 
           <>
             {item.dir ? <Hint fs={fs} k="→" label="open" onClick={() => store.open(index)} /> : null}
             {hasCulprit ? <Hint fs={fs} k="g" label="go to culprit" keyColor={AMBER} onClick={() => store.goToCulprit(index)} /> : null}
-            <Hint fs={fs} k="o" label={REVEAL_LABEL} onClick={() => void store.reveal(index)} />
+            <Hint fs={fs} k="o" label="reveal in finder" onClick={() => void store.reveal(index)} />
             {state.selected === "system" ? null : armed ? (
               <T fs={fs} color={RED} bold onClick={() => store.removeItem(index)}>
                 {forGood ? `⌫ again to delete ${size(item.size)} for good` : `⌫ again to move ${size(item.size)} to trash`}
@@ -639,13 +581,9 @@ function Empty({ state, store, fs }: Ctx) {
   const id = state.selected;
   let text: string;
   if (state.listing) text = "measuring what is inside…";
-  else if (!state.layout) text = "looking at this drive…";
   else if (state.junkOnly) text = "nothing here looks like junk · f to show everything";
   else if (state.scan.phase === "scanning" && state.stack.length === 0) text = "still measuring…";
-  else if (id === "system")
-    text = IS_MAC
-      ? "macOS itself, snapshots, swap and anything this scan could not read. macOS manages it."
-      : "the system itself, reserved space and anything this scan could not read. the system manages it.";
+  else if (id === "system") text = "macOS itself, snapshots, swap and anything this scan could not read. macOS manages it.";
   else if (state.stack.length > 0) text = "empty, or could not be read";
   else if (store.allEntries().length === 0 && state.scan.sizes[id] < 1e6) text = "nothing here";
   else text = "nothing large enough to list";
@@ -706,7 +644,7 @@ function BottomLine({ state, fs }: Ctx) {
   const keys: Array<[string, string]> =
     state.pane === "list"
       ? [["↑↓", "move"], ["→", "open"], ["←", "back"], ["g", "culprit"], ["f", "junk only"], ["o", "reveal"], ["⌫", "remove"], ["q", "quit"]]
-      : [["↑↓", "category"], ["→", "look inside"], ["f", "junk only"], ["c", "clear"], ...(state.drives.length > 1 ? [["v", "drive"] as [string, string]] : []), ["r", "rescan"], ["q", "quit"]];
+      : [["↑↓", "category"], ["→", "look inside"], ["f", "junk only"], ["c", "clear"], ["r", "rescan"], ["q", "quit"]];
   return (
     <Box style={{ justifyContent: "space-between", gap: fs * 2, flexShrink: 0 }}>
       <Box style={{ gap: fs * 1.4, flexShrink: 0 }}>

@@ -1,6 +1,5 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { IS_MAC } from "./platform";
 
 export type CategoryId =
   | "apps"
@@ -16,7 +15,7 @@ export type CategoryId =
 /**
  * safe:   regenerates on its own or was already thrown away; clearing loses nothing.
  * review: yours to decide; the tool shows it but never deletes it for you.
- * keep:   personal data or managed by the system; never offered for deletion.
+ * keep:   personal data or managed by macOS; never offered for deletion.
  */
 export type Tier = "safe" | "review" | "keep";
 
@@ -32,15 +31,7 @@ export interface Category {
 
 /** Order is the order of segments in the bar and of the legend, row by row. */
 export const CATEGORIES: Category[] = [
-  {
-    id: "apps",
-    name: "Apps",
-    color: [59, 130, 246],
-    tier: "review",
-    blurb: IS_MAC
-      ? "Applications and the data they keep."
-      : "Applications and the data they keep: /opt, Flatpak, Snap, ~/.local/share, ~/.config.",
-  },
+  { id: "apps", name: "Apps", color: [59, 130, 246], tier: "review", blurb: "Applications and the data they keep." },
   {
     id: "developer",
     name: "Developer",
@@ -49,21 +40,13 @@ export const CATEGORIES: Category[] = [
     blurb: "Toolchains, SDKs, simulators, containers and tool folders.",
   },
   { id: "photos", name: "Photos", color: [236, 72, 153], tier: "keep", blurb: "Your pictures and photo libraries." },
-  {
-    id: "movies",
-    name: IS_MAC ? "Movies" : "Videos",
-    color: [139, 92, 246],
-    tier: "keep",
-    blurb: "Your videos and video projects.",
-  },
+  { id: "movies", name: "Movies", color: [139, 92, 246], tier: "keep", blurb: "Your videos and video projects." },
   {
     id: "documents",
     name: "Documents",
     color: [34, 211, 238],
     tier: "review",
-    blurb: IS_MAC
-      ? "Documents, Desktop, Downloads and other folders in your home."
-      : "Documents, Desktop, Downloads, other folders in your home, and loose files on other drives.",
+    blurb: "Documents, Desktop, Downloads and other folders in your home.",
   },
   { id: "music", name: "Music", color: [234, 179, 8], tier: "keep", blurb: "Your music and audio projects." },
   {
@@ -71,9 +54,7 @@ export const CATEGORIES: Category[] = [
     name: "System data",
     color: [156, 163, 175],
     tier: "keep",
-    blurb: IS_MAC
-      ? "macOS, logs, snapshots and anything this scan cannot read. The system manages these."
-      : "The system, packages, logs, swap, snapshots and anything this scan cannot read. Your package manager handles these.",
+    blurb: "macOS, logs, snapshots and anything this scan cannot read. The system manages these.",
   },
   {
     id: "caches",
@@ -97,14 +78,13 @@ export const TIER_LABEL: Record<Tier, string> = {
 
 export interface Root {
   path: string;
-  /** System data is otherwise whatever the disk reports beyond what was measured; a system root lists where some of it is. */
-  category: CategoryId;
+  category: Exclude<CategoryId, "system">;
   /** Category for the dot-folders directly inside this root, when it differs. */
-  hidden?: CategoryId;
+  hidden?: Exclude<CategoryId, "system">;
 }
 
 /**
- * Folders the scan measures on a Mac, and the category each one counts toward. A root
+ * Folders the scan measures, and the category each one counts toward. A root
  * nested inside another root is measured on its own and left out of the outer
  * one, so nothing is counted twice (Xcode's DerivedData counts as a cache, not
  * as Developer).
