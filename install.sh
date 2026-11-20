@@ -45,50 +45,16 @@ uninstall() {
   say "${GREEN}fix-storage is uninstalled.${RESET}"
 }
 
-check_platform() {
-  case "$(uname -s)" in
-    Darwin) OS="macos" ;;
-    Linux) OS="linux" ;;
-    *) fail "fix-storage runs on macOS and Linux." ;;
-  esac
-  case "$(uname -m)" in
-    x86_64 | amd64 | arm64 | aarch64) ;;
-    *) fail "fix-storage needs a 64-bit Intel/AMD or ARM computer; this one is $(uname -m)." ;;
-  esac
-  if [ "$OS" = "linux" ]; then
-    # The graphics runtime is downloaded as a zip.
-    command -v unzip >/dev/null 2>&1 || fail "fix-storage needs unzip. Install it with your package manager, e.g.
-       sudo apt install unzip   or   sudo dnf install unzip   or   sudo pacman -S unzip"
-  fi
-}
-
-node_hint() {
-  if [ "$OS" = "macos" ]; then
-    printf '%s' "brew install node   (or from https://nodejs.org)"
-  else
-    printf '%s' "your package manager (e.g. sudo apt install nodejs npm), or from https://nodejs.org"
-  fi
-}
-
 check_node() {
   command -v node >/dev/null 2>&1 || fail "fix-storage needs Node.js ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR} or newer.
-       Install it with:  $(node_hint)"
-  command -v npm >/dev/null 2>&1 || fail "npm was not found. It normally comes with Node.js; on some Linux systems it is a separate package."
+       Install it with:  brew install node   (or from https://nodejs.org)"
+  command -v npm >/dev/null 2>&1 || fail "npm was not found. It normally comes with Node.js."
   version="$(node -p 'process.versions.node')"
   major="$(printf '%s' "$version" | cut -d. -f1)"
   minor="$(printf '%s' "$version" | cut -d. -f2)"
   if [ "$major" -lt "$MIN_NODE_MAJOR" ] || { [ "$major" -eq "$MIN_NODE_MAJOR" ] && [ "$minor" -lt "$MIN_NODE_MINOR" ]; }; then
     fail "fix-storage needs Node.js ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR} or newer; you have $version.
-       Update it with:  $(node_hint)"
-  fi
-}
-
-# sha256 of a file: shasum on macOS, sha256sum on Linux (where shasum may be missing).
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | cut -d' ' -f1
-  else
-    shasum -a 256 "$1" | cut -d' ' -f1
+       Update it with:  brew upgrade node"
   fi
 }
 
@@ -124,7 +90,7 @@ verify() {
     return 0
   fi
   expected="$(cut -d' ' -f1 <"$file.sha256")"
-  actual="$(sha256 "$file")"
+  actual="$(shasum -a 256 "$file" | cut -d' ' -f1)"
   [ "$expected" = "$actual" ] || fail "checksum mismatch for $url
        expected $expected
        got      $actual"
@@ -132,7 +98,7 @@ verify() {
 }
 
 install() {
-  check_platform
+  [ "$(uname -s)" = "Darwin" ] || fail "fix-storage is for macOS only."
   check_node
 
   if [ -z "$VERSION" ] && [ -z "${FIX_STORAGE_TARBALL:-}" ]; then
@@ -162,16 +128,11 @@ install() {
   rm -rf "$staging"
   mkdir -p "$staging"
   printf '{ "name": "fix-storage-install", "private": true }\n' >"$staging/package.json"
-  # The graphics runtime unpacks in the temp folder and then moves into place,
-  # which fails when /tmp is on another filesystem (tmpfs on most Linux
-  # systems). A temp folder next to the install keeps it on the same one.
-  mkdir -p "$staging/.tmp"
-  if ! (cd "$staging" && TMPDIR="$staging/.tmp" npm install --omit=dev --no-fund --no-audit --loglevel=error "$tmp/fix-storage.tgz" >"$tmp/npm.log" 2>&1); then
+  if ! (cd "$staging" && npm install --omit=dev --no-fund --no-audit --loglevel=error "$tmp/fix-storage.tgz" >"$tmp/npm.log" 2>&1); then
     cat "$tmp/npm.log" >&2
     rm -rf "$staging"
     fail "npm install failed (log above)."
   fi
-  rm -rf "$staging/.tmp"
   rm -rf "$APP_HOME"
   mv "$staging" "$APP_HOME"
 
@@ -186,22 +147,12 @@ install() {
       say "Run ${BOLD}fix-storage${RESET} to see what is filling your disk."
       ;;
     *)
+      shell_rc="$HOME/.zshrc"
+      case "${SHELL:-}" in */bash) shell_rc="$HOME/.bash_profile" ;; esac
       say ""
       warn "$BIN_DIR is not on your PATH. Add it with:"
       say ""
-      case "${SHELL:-}" in
-        */fish)
-          say "  fish_add_path $BIN_DIR"
-          ;;
-        *)
-          if [ "$OS" = "macos" ]; then shell_rc="$HOME/.zshrc"; else shell_rc="$HOME/.profile"; fi
-          case "${SHELL:-}" in
-            */bash) if [ "$OS" = "macos" ]; then shell_rc="$HOME/.bash_profile"; else shell_rc="$HOME/.bashrc"; fi ;;
-            */zsh) shell_rc="$HOME/.zshrc" ;;
-          esac
-          say "  echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> $shell_rc && . $shell_rc"
-          ;;
-      esac
+      say "  echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> $shell_rc && source $shell_rc"
       say ""
       say "Then run ${BOLD}fix-storage${RESET}."
       ;;

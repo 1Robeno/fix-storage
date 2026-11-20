@@ -20,11 +20,8 @@ import {
   type ListHandle,
 } from "../core/browse";
 import { clean, plan, type Clearable } from "../core/clean";
-import { demoDrives, demoLayout, demoPlan, startDemoScan } from "../core/demo";
-import { listDrives, pickDrive, type Drive, type Partition } from "../core/drives";
+import { demoPlan, startDemoScan } from "../core/demo";
 import { size, tilde } from "../core/format";
-import { layoutFor, type Layout } from "../core/layout";
-import { FILE_MANAGER, IS_MAC, OS_NAME } from "../core/platform";
 import { diskSpace, emptySnapshot, measure, startScan, type Item, type ScanHandle, type ScanSnapshot } from "../core/scan";
 
 export interface Action {
@@ -43,14 +40,6 @@ export interface Level {
 }
 
 export interface AppState {
-  /** Mounted drives; one on a Mac. */
-  drives: Drive[];
-  /** Index of the drive on screen. */
-  drive: number;
-  /** How the drive on screen is measured; null while it is being worked out. */
-  layout: Layout | null;
-  /** Partitions with files on them that are not mounted. */
-  unmounted: Partition[];
   scan: ScanSnapshot;
   /** Category shown in the detail pane. */
   selected: CategoryId;
@@ -86,8 +75,6 @@ export interface AppState {
 export interface Options {
   demo: boolean;
   dryRun: boolean;
-  /** Drive to open first: a number, name, mount point or any path on it. */
-  drive?: string;
 }
 
 type Listener = () => void;
@@ -99,10 +86,6 @@ export const MAX_ROWS = 150;
 
 export class Store {
   private state: AppState = {
-    drives: [],
-    drive: 0,
-    layout: null,
-    unmounted: [],
     scan: emptySnapshot(),
     selected: CATEGORIES[0].id,
     hover: null,
@@ -128,10 +111,6 @@ export class Store {
   private culpritQueue: Item[] = [];
   private usagePending = new Set<string>();
   private enrichScheduled = false;
-  /** Finished scans by drive, so switching back to a drive is instant. */
-  private scans = new Map<string, ScanSnapshot>();
-  /** Bumped on every drive load, so a slow one that was overtaken is dropped. */
-  private loads = 0;
 
   constructor(readonly options: Options) {}
 
@@ -269,70 +248,19 @@ export class Store {
 
   // ---- scanning ------------------------------------------------------------
 
-  /** Lists the drives again and measures the one on screen from scratch. */
   rescan() {
     if (this.state.action || this.state.removing) return;
-    this.stopWork();
-    forgetAllSizes();
-    this.scans.clear();
-    this.set({ scan: emptySnapshot(), note: null, stack: [], children: [], listing: false, row: 0, culprits: {} });
-    const current = this.state.drives[this.state.drive];
-    void this.load(async () => {
-      const { drives, unmounted } = this.options.demo ? { drives: demoDrives(), unmounted: [] } : await listDrives();
-      const keep = current ? drives.findIndex((d) => d.id === current.id) : -1;
-      const asked = pickDrive(this.options.drive, drives);
-      const note = this.options.drive && !asked && !current ? `No drive matches ${this.options.drive}.` : this.state.note;
-      this.set({ drives, unmounted, drive: keep >= 0 ? keep : Math.max(0, drives.indexOf(asked ?? drives[0])), note });
-    });
-  }
-
-  private stopWork() {
     this.scanHandle?.cancel();
-    this.scanHandle = null;
     this.listHandle?.cancel();
     this.clearConfirm();
     this.dropCulpritWork();
-  }
-
-  /** Works out the drive's layout, then shows its last scan or measures it. */
-  private async load(before?: () => Promise<void>) {
-    const ticket = ++this.loads;
-    this.set({ layout: null });
-    await before?.();
-    const drive = this.state.drives[this.state.drive];
-    if (ticket !== this.loads || !drive) return;
-    const layout = this.options.demo ? demoLayout(drive) : await layoutFor(drive);
-    if (ticket !== this.loads) return;
-    this.set({ layout });
-    const cached = this.scans.get(drive.id);
-    if (cached) {
-      this.set({ scan: cached });
-      return;
-    }
+    forgetAllSizes();
+    this.set({ scan: emptySnapshot(), note: null, stack: [], children: [], listing: false, row: 0, culprits: {} });
     const start = this.options.demo ? startDemoScan : startScan;
-    const handle = start(layout, (scan) => {
-      if (this.scanHandle !== handle) return;
-      if (scan.phase === "done") this.scans.set(drive.id, scan);
-      this.set({ scan });
+    const handle = start((scan) => {
+      if (this.scanHandle === handle) this.set({ scan });
     });
     this.scanHandle = handle;
-  }
-
-  /** Shows another drive: by index, or relative to this one with step. */
-  setDrive(index: number) {
-    const { drives, drive, action, removing } = this.state;
-    if (action || removing || drives.length < 2) return;
-    const next = ((index % drives.length) + drives.length) % drives.length;
-    if (next === drive) return;
-    // Keep what the current drive's scan knows, deletions included.
-    if (this.state.scan.phase === "done") this.scans.set(drives[drive].id, this.state.scan);
-    this.stopWork();
-    this.set({ drive: next, scan: emptySnapshot(), note: null, stack: [], children: [], listing: false, row: 0, pane: "sidebar" });
-    void this.load();
-  }
-
-  nextDrive(step = 1) {
-    this.setDrive(this.state.drive + step);
   }
 
   // ---- moving around -------------------------------------------------------
@@ -436,14 +364,10 @@ export class Store {
     }
 
     this.set({ stack, children: [], listing: true, row: 0, pane: "list", note: null });
-    const handle = listFolder(
-      item.path,
-      (children, done) => {
-        if (this.listHandle !== handle) return;
-        this.set({ children, listing: !done });
-      },
-      this.state.layout?.foreign,
-    );
+    const handle = listFolder(item.path, (children, done) => {
+      if (this.listHandle !== handle) return;
+      this.set({ children, listing: !done });
+    });
     this.listHandle = handle;
   }
 
@@ -480,14 +404,10 @@ export class Store {
       return;
     }
     this.set({ stack, children: [], listing: true, row: 0, pane: "list" });
-    const handle = listFolder(
-      item.path,
-      (children, done) => {
-        if (this.listHandle !== handle) return;
-        this.set({ children, listing: !done, row: done ? pick(children) : this.state.row });
-      },
-      this.state.layout?.foreign,
-    );
+    const handle = listFolder(item.path, (children, done) => {
+      if (this.listHandle !== handle) return;
+      this.set({ children, listing: !done, row: done ? pick(children) : this.state.row });
+    });
     this.listHandle = handle;
   }
 
@@ -512,26 +432,23 @@ export class Store {
   /** Why the highlighted item cannot be removed, or null. */
   blocked(item: Item | undefined): string | null {
     if (!item) return "Nothing selected.";
-    const { layout, selected } = this.state;
-    if (!layout) return "Still working out this drive.";
-    if (layout.lookOnly) return layout.lookOnly.charAt(0).toUpperCase() + layout.lookOnly.slice(1) + ".";
-    if (selected === "system") return IS_MAC ? "macOS manages System data." : `${OS_NAME} manages System data · the label says how to shrink it.`;
+    if (this.state.selected === "system") return "macOS manages System data.";
     if (this.options.demo) return null;
-    return cannotRemove(item.path, layout);
+    return cannotRemove(item.path);
   }
 
   async reveal(row = this.state.row) {
     const item = this.entries()[row];
     if (!item) return;
     if (this.options.demo) {
-      this.set({ note: `Demo: would show ${tilde(item.path)} in ${FILE_MANAGER}.` });
+      this.set({ note: `Demo: would show ${tilde(item.path)} in Finder.` });
       return;
     }
     try {
       await reveal(item.path);
-      this.set({ note: `Showing ${basename(item.path)} in ${FILE_MANAGER}.` });
+      this.set({ note: `Showing ${basename(item.path)} in Finder.` });
     } catch {
-      this.set({ note: `Could not show ${tilde(item.path)} in ${FILE_MANAGER}.` });
+      this.set({ note: `Could not show ${tilde(item.path)} in Finder.` });
     }
   }
 
@@ -556,20 +473,17 @@ export class Store {
 
   private async runRemove(item: Item) {
     const category = this.state.selected;
-    const layout = this.state.layout;
-    if (!layout) return;
     const forGood = deletesForGood(category);
     this.set({ removing: item.path, note: null });
 
     let ok = true;
     let error = "";
-    let trashed = trashPathFor(item.path, layout);
     if (this.pretend) {
       await new Promise((done) => setTimeout(done, 450));
     } else {
       try {
-        if (forGood) await deleteForGood(item.path, category);
-        else trashed = await moveToTrash(item.path, layout);
+        if (forGood) await deleteForGood(item.path);
+        else await moveToTrash(item.path);
       } catch (e) {
         ok = false;
         error = e instanceof Error ? e.message : String(e);
@@ -610,12 +524,14 @@ export class Store {
     } else {
       // Still on disk, only in the Trash now.
       sizes.trash += item.size;
-      items.trash = [{ path: trashed, size: item.size, dir: item.dir }, ...items.trash].sort((a, b) => b.size - a.size);
+      items.trash = [{ path: trashPathFor(item.path), size: item.size, dir: item.dir }, ...items.trash].sort(
+        (a, b) => b.size - a.size,
+      );
     }
     if (!this.pretend && forGood) {
-      const space = await diskSpace(layout.drive);
+      const space = await diskSpace();
       if (space.total > 0) {
-        used = space.used;
+        used = space.total - space.available;
         available = space.available;
       }
     }
@@ -645,8 +561,7 @@ export class Store {
   }
 
   canClear(id: CategoryId): id is Clearable {
-    const { layout, scan } = this.state;
-    return !!layout && !layout.lookOnly && (CLEARABLE as CategoryId[]).includes(id) && scan.sizes[id] >= WORTH_CLEARING;
+    return (CLEARABLE as CategoryId[]).includes(id) && this.state.scan.sizes[id] >= WORTH_CLEARING;
   }
 
   /** First press arms the button, second press within a few seconds clears. */
@@ -673,13 +588,11 @@ export class Store {
   }
 
   private async run(id: Clearable) {
-    const layout = this.state.layout;
-    if (!layout || layout.lookOnly) return;
     const before = this.state.scan.sizes[id];
     this.listHandle?.cancel();
     this.set({ action: { id, current: "" }, note: null, hover: null, selected: id, stack: [], children: [], row: 0 });
 
-    const items = this.options.demo ? demoPlan(id, layout) : await plan(id, this.state.scan.items[id], layout);
+    const items = this.options.demo ? demoPlan(id) : await plan(id, this.state.scan.items[id]);
 
     const onProgress = ({ path, freed }: { path: string; freed: number }) => {
       const scan = this.state.scan;
@@ -702,16 +615,16 @@ export class Store {
         onProgress({ path: item.path, freed: item.size });
       }
     } else {
-      const result = await clean(id, items, layout, { dryRun: this.options.dryRun, onProgress });
+      const result = await clean(id, items, { dryRun: this.options.dryRun, onProgress });
       skipped = result.skipped.length;
     }
 
     // Replace the running estimate with what is actually on disk now.
     let scan = this.state.scan;
     if (!this.pretend) {
-      const [left, space] = await Promise.all([measure(id, layout), diskSpace(layout.drive)]);
+      const [left, space] = await Promise.all([measure(id), diskSpace()]);
       const sizes = { ...scan.sizes, [id]: left };
-      const used = space.total > 0 ? space.used : scan.used;
+      const used = space.total > 0 ? space.total - space.available : scan.used;
       scan = { ...scan, sizes, used, available: space.total > 0 ? space.available : scan.available };
     }
     const freed = Math.max(0, before - scan.sizes[id]);

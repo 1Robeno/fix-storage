@@ -14,12 +14,11 @@ concurrency:
 
 jobs:
   build:
-    name: Build (${{ matrix.os }}, Node ${{ matrix.node }})
-    runs-on: ${{ matrix.os }}
+    name: Build (Node ${{ matrix.node }})
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
         node: [20, 22, 24]
     env:
       # The graphics runtime isn't needed to build or to run the text modes.

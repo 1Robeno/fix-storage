@@ -10,7 +10,7 @@ Please **don't open a public issue** for:
 - `--dry-run` or `--demo` changing anything on disk
 - problems with the install script
 
-Report it privately through [GitHub security advisories](https://github.com/govijr/fix-storage/security/advisories/new). Include your OS version (and Linux distribution), the command you ran, and the path involved. You'll get a reply within a few days.
+Report it privately through [GitHub security advisories](https://github.com/govijr/fix-storage/security/advisories/new). Include your macOS version, the command you ran, and the path involved. You'll get a reply within a few days.
 
 ## Supported versions
 
