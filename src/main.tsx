@@ -1,9 +1,11 @@
 import { createRoot } from "@zenbu-labs/pixel";
+import { driveArg } from "./plain";
 import { App } from "./ui/app";
 import { Store } from "./ui/store";
 
-const args = new Set(process.argv.slice(2));
-const store = new Store({ demo: args.has("--demo"), dryRun: args.has("--dry-run") });
+const argv = process.argv.slice(2);
+const args = new Set(argv);
+const store = new Store({ demo: args.has("--demo"), dryRun: args.has("--dry-run"), drive: driveArg(argv) });
 
 const quit = () => {
   store.stop();
@@ -90,6 +92,12 @@ const root = createRoot({
     if (key === "q") return quit(), true;
     if (key === "r") return store.rescan(), true;
     if (key === "f") return store.toggleJunkOnly(), true;
+    if (key === "v" || key === "V") return store.nextDrive(mods.shift || key === "V" ? -1 : 1), true;
+    if (/^[1-9]$/.test(key)) {
+      const index = Number(key) - 1;
+      if (index < store.get().drives.length) store.setDrive(index);
+      return true;
+    }
     const handled = store.get().pane === "sidebar" ? sidebarKey(key) : listKey(key);
     return handled || undefined;
   },

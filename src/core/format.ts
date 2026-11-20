@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 
 const GB = 1e9;
@@ -20,7 +21,20 @@ export function size(bytes: number): string {
   return `${Math.max(0, Math.round(bytes / 1e3))} KB`;
 }
 
+const HOME = homedir();
+/** Where the home folder really is, when it is reached through a symlink (/home -> /var/home). */
+const REAL_HOME = (() => {
+  try {
+    return realpathSync(HOME);
+  } catch {
+    return HOME;
+  }
+})();
+
 /** Replaces the home directory with ~ so paths stay short. */
-export function tilde(path: string, home: string = homedir()): string {
-  return path === home || path.startsWith(home + "/") ? "~" + path.slice(home.length) : path;
+export function tilde(path: string, home: string = HOME): string {
+  for (const h of home === HOME ? [HOME, REAL_HOME] : [home]) {
+    if (path === h || path.startsWith(h + "/")) return "~" + path.slice(h.length);
+  }
+  return path;
 }
