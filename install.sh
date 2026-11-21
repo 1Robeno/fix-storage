@@ -161,7 +161,9 @@ install() {
   staging="$APP_HOME.new"
   rm -rf "$staging"
   mkdir -p "$staging"
-  printf '{ "name": "fix-storage-install", "private": true }\n' >"$staging/package.json"
+  # npm 12 skips dependency install scripts unless allowScripts names them, and
+  # pixel's postinstall is what fetches the graphics runtime.
+  printf '{ "name": "fix-storage-install", "private": true, "allowScripts": { "@zenbu-labs/pixel": true } }\n' >"$staging/package.json"
   # The graphics runtime unpacks in the temp folder and then moves into place,
   # which fails when /tmp is on another filesystem (tmpfs on most Linux
   # systems). A temp folder next to the install keeps it on the same one.
