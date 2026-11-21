@@ -13,14 +13,10 @@ export interface Item {
   dir?: boolean;
 }
 
-export interface ScanSnapshot {
+export interface ScanSnapshot extends Space {
   phase: "scanning" | "done";
-  /** Capacity of the disk in bytes. */
-  total: number;
-  /** Free bytes, as the filesystem reports them. */
-  available: number;
-  /** total - available. While scanning, the sum measured so far. */
-  used: number;
+  /** Sum of the file and folder estimates, before accounting for unmeasured space. */
+  measured: number;
   sizes: Record<CategoryId, number>;
   /** Measured folders per category, largest first. */
   items: Record<CategoryId, Item[]>;
@@ -35,6 +31,10 @@ export interface ScanHandle {
   done: Promise<ScanSnapshot>;
 }
 
+export function unmeasuredBytes({ used, measured }: ScanSnapshot): number {
+  return Math.max(0, used - measured);
+}
+
 export function emptyRecord<T>(make: () => T): Record<CategoryId, T> {
   return Object.fromEntries(CATEGORIES.map((c) => [c.id, make()])) as Record<CategoryId, T>;
 }
@@ -45,6 +45,7 @@ export function emptySnapshot(): ScanSnapshot {
     total: 0,
     available: 0,
     used: 0,
+    measured: 0,
     sizes: emptyRecord(() => 0),
     items: emptyRecord<Item[]>(() => []),
     current: "",
@@ -53,6 +54,7 @@ export function emptySnapshot(): ScanSnapshot {
 }
 
 export interface Space {
+  /** Filesystem capacity in bytes. */
   total: number;
   /** Free bytes this account can use. */
   available: number;
@@ -163,13 +165,12 @@ export function startScan(layout: Layout, onUpdate: (snapshot: ScanSnapshot) => 
 
   const add = (category: CategoryId, bytes: number) => {
     snap.sizes[category] += bytes;
-    snap.used += bytes;
+    snap.measured += bytes;
   };
 
   const run = async (): Promise<ScanSnapshot> => {
-    const space = await diskSpace(layout.drive);
-    snap.total = space.total;
-    snap.available = space.available;
+    Object.assign(snap, await diskSpace(layout.drive));
+    emit(true);
 
     const all = layout.roots;
     const rootPaths = new Set(all.map((r) => r.path));
@@ -253,13 +254,8 @@ export function startScan(layout: Layout, onUpdate: (snapshot: ScanSnapshot) => 
     // system's: the OS itself, snapshots, swap, and folders this process may
     // not read.
     const after = await diskSpace(layout.drive);
-    if (after.total > 0) {
-      snap.total = after.total;
-      snap.available = after.available;
-      const others = snap.used - snap.sizes.system;
-      snap.sizes.system = Math.max(snap.sizes.system, after.used - others);
-      snap.used = Math.max(after.used, snap.used);
-    }
+    if (after.total > 0) Object.assign(snap, after);
+    snap.sizes.system += unmeasuredBytes(snap);
     snap.current = "";
     snap.phase = "done";
     emit(true);

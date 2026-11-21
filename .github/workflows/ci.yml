@@ -41,6 +41,20 @@ jobs:
       - name: Package contents
         run: npm pack --dry-run
 
+  test:
+    name: Disk usage regression tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    env:
+      PIXEL_SKIP_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --no-save
+      - run: bun test
+
   installer:
     name: Lint install.sh
     runs-on: ubuntu-latest

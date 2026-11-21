@@ -176,9 +176,8 @@ export function demoPlan(category: Clearable, layout: Layout): Item[] {
 }
 
 export function startDemoScan(layout: Layout, onUpdate: (snapshot: ScanSnapshot) => void): ScanHandle {
-  const { total, sizes, paths } = disk(layout);
-  const snap = emptySnapshot();
-  snap.total = total;
+  const { sizes, paths } = disk(layout);
+  const snap = { ...emptySnapshot(), ...demoSpace(layout.drive) };
   let timer: NodeJS.Timeout | null = null;
 
   const done = new Promise<ScanSnapshot>((resolve) => {
@@ -196,15 +195,14 @@ export function startDemoScan(layout: Layout, onUpdate: (snapshot: ScanSnapshot)
       const step = steps[index++];
       if (step) {
         snap.sizes[step.id] += step.bytes;
-        snap.used += step.bytes;
+        snap.measured += step.bytes;
         snap.current = step.path;
         onUpdate({ ...snap, sizes: { ...snap.sizes } });
         return;
       }
       if (timer) clearInterval(timer);
       snap.sizes = { ...sizes };
-      snap.used = Object.values(sizes).reduce((a, b) => a + b, 0);
-      snap.available = total - snap.used;
+      snap.measured = snap.used;
       for (const category of CATEGORIES) snap.items[category.id] = split(sizes[category.id], paths[category.id]);
       snap.current = "";
       snap.phase = "done";

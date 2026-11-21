@@ -9,7 +9,7 @@ import type { Clearable } from "../core/clean";
 import { capacity, gb, size, tilde } from "../core/format";
 import { IS_MAC, REVEAL_LABEL } from "../core/platform";
 import type { Item } from "../core/scan";
-import { BAR_ROWS, BarCanvas, HEADROOM_ROWS, type BarModel } from "./bar";
+import { BAR_ROWS, BarCanvas, HEADROOM_ROWS, diskSegments, type BarModel } from "./bar";
 import { MAX_ROWS, type AppState, type Store } from "./store";
 
 // Everything is one monospace face at one size, like the rest of the terminal.
@@ -143,10 +143,9 @@ function Dots({ fraction, color, count, fs, seed, rows = 1, dim = false }: { fra
 
 function barModel(state: AppState): BarModel {
   const { scan } = state;
-  const total = scan.total || 1;
   const focus = scan.phase === "done" && !state.action ? state.selected : null;
   return {
-    segments: CATEGORIES.map((c) => ({ id: c.id, color: c.color, fraction: Math.min(1, scan.sizes[c.id] / total) })),
+    segments: diskSegments(scan),
     hover: state.hover ?? focus,
     scanning: scan.phase === "scanning",
     clearing: state.action?.id ?? null,
@@ -199,14 +198,14 @@ function Meter({ root, store, fs }: { root: Root; store: Store; fs: number }) {
 
 /** Character fallback for terminals without graphics. */
 function CellMeter({ state, fs }: { state: AppState; fs: number }) {
-  const total = state.scan.total || 1;
-  const used = CATEGORIES.reduce((sum, c) => sum + state.scan.sizes[c.id], 0);
+  const segments = diskSegments(state.scan);
+  const filled = segments.reduce((sum, segment) => sum + segment.fraction, 0);
   return (
     <Box style={{ width: "100%", height: fs * 1.4, flexShrink: 0 }}>
-      {CATEGORIES.map((c) => (
-        <Box key={c.id} style={{ flexGrow: state.scan.sizes[c.id] / total, flexBasis: 0, background: state.selected === c.id ? c.color : rgba(c.color, 0.6) }} />
+      {segments.map(({ id, color, fraction }) => (
+        <Box key={id} style={{ flexGrow: fraction, flexBasis: 0, background: state.selected === id ? color : rgba(color, 0.6) }} />
       ))}
-      <Box style={{ flexGrow: Math.max(0, 1 - used / total), flexBasis: 0, background: "#141414" }} />
+      <Box style={{ flexGrow: Math.max(0, 1 - filled), flexBasis: 0, background: "#141414" }} />
     </Box>
   );
 }
@@ -296,7 +295,7 @@ function Totals({ state, fs }: Ctx) {
   return (
     <Box style={{ justifyContent: "space-between", flexShrink: 0 }}>
       <Box style={{ flexShrink: 0 }}>
-        <T fs={fs} bold>{gb(scan.used)}</T>
+        <T fs={fs} bold>{known ? gb(scan.used) : "…"}</T>
         <T fs={fs} color={MUTED}>{known ? ` used of ${capacity(scan.total)}` : " used"}</T>
         <Sep fs={fs} />
         <T fs={fs}>{known ? gb(scan.available) : "…"}</T>
@@ -306,7 +305,7 @@ function Totals({ state, fs }: Ctx) {
         <T fs={fs} color={MUTED}>{" full"}</T>
       </Box>
       {state.freed > 0 ? (
-        <T fs={fs} color={GREEN}>{`${gb(state.freed)} freed this session`}</T>
+        <T fs={fs} color={GREEN}>{`~${gb(state.freed)} cleared this session`}</T>
       ) : !IS_MAC && state.drives[state.drive] ? (
         <T fs={fs} color={FAINT} style={{ flexShrink: 1, ellipsis: true, margin: { left: ch(fs, 2) } }}>
           {driveDetail(state)}
@@ -455,7 +454,9 @@ function InsideHeader(ctx: Ctx) {
         <Breadcrumb {...ctx} />
         <Box style={{ flexShrink: 0 }}>
           <T fs={fs} bold>{gb(scope)}</T>
-          <T fs={fs} color={MUTED} style={{ margin: { left: ch(fs, 2), right: ch(fs, 2) } }}>{`${pct(scope, state.scan.total)} of disk`}</T>
+          <T fs={fs} color={MUTED} style={{ margin: { left: ch(fs, 2), right: ch(fs, 2) } }}>
+            {state.scan.total > 0 ? `est. ${pct(scope, state.scan.total)} of capacity` : "estimated"}
+          </T>
           <T fs={fs} color={TIER_COLOR[category.tier]}>{TIER_LABEL[category.tier].toLowerCase()}</T>
         </Box>
       </Box>
@@ -645,7 +646,7 @@ function Empty({ state, store, fs }: Ctx) {
   else if (id === "system")
     text = IS_MAC
       ? "macOS itself, snapshots, swap and anything this scan could not read. macOS manages it."
-      : "the system itself, reserved space and anything this scan could not read. the system manages it.";
+      : "the system itself, swap and anything this scan could not read. the system manages it.";
   else if (state.stack.length > 0) text = "empty, or could not be read";
   else if (store.allEntries().length === 0 && state.scan.sizes[id] < 1e6) text = "nothing here";
   else text = "nothing large enough to list";
@@ -729,6 +730,8 @@ export function App({ root, store }: { root: Root; store: Store }) {
   const cells = info.renderer === "cells";
   const fs = Math.round(info.basePx * 0.85);
   const ctx: Ctx = { state, store, fs };
+  const { scan } = state;
+  const excess = scan.total > 0 ? scan.measured - scan.used : 0;
   // 1 + 1 + 1 + 12 + 9 characters, the dots, and the gaps between them.
   const left = fs * 0.6 * 24 + fs * 0.6 * 5 + 14 * (Math.max(2, Math.round(fs * 0.26)) + Math.max(1, Math.round(fs * 0.14)));
 
@@ -746,6 +749,11 @@ export function App({ root, store }: { root: Root; store: Store }) {
       <TopLine {...ctx} />
       <Box style={{ height: fs * 0.4, flexShrink: 0 }} />
       <Totals {...ctx} />
+      {scan.phase === "scanning" || excess > 0 ? (
+        <T fs={fs} color={MUTED}>
+          {scan.phase === "scanning" ? `${gb(scan.measured)} measured so far` : `${gb(scan.measured)} measured · ${size(excess)} above filesystem usage`}
+        </T>
+      ) : null}
       {cells ? <CellMeter state={state} fs={fs} /> : <Meter root={root} store={store} fs={fs} />}
       <Box style={{ flexGrow: 1, flexShrink: 1, gap: fs * 3, margin: { top: fs * 0.8 }, minWidth: 0 }}>
         <Categories {...ctx} width={left} />

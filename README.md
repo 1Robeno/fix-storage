@@ -102,6 +102,8 @@ fix-storage --plain --drive 2    # text summary of the second drive
 
 Everything is clickable too: categories, the disk meter, rows, the breadcrumb, the drive names and every action.
 
+The headline and meter use the filesystem's usage figures. Category sizes are estimates from scanning files and folders, so shared data can make their sum larger than filesystem usage. The JSON summary's `measured` field gives the scan estimate in bytes, before any unmeasured space is added to System data. On Linux, reserved blocks can make used plus available smaller than capacity.
+
 ## Linux, drives and dual boot
 
 On Linux, fix-storage reads the mount table and treats each filesystem as one drive, however many times it is mounted. A bind-mounted `/home` or a set of btrfs subvolumes is measured once, and a drive mounted inside a folder of another (say `~/games`) counts only on its own drive. The drive holding your home folder opens first; `v` cycles through the rest.

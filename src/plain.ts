@@ -37,7 +37,7 @@ export async function runPlain(args: string[]): Promise<void> {
   const handle = start(layout, (snapshot) => {
     if (!live || snapshot.phase === "done") return;
     const columns = process.stderr.columns ?? 80;
-    const line = `Calculating ${gb(snapshot.used)}  ${tilde(snapshot.current)}`;
+    const line = `${gb(snapshot.measured)} measured  ${tilde(snapshot.current)}`;
     process.stderr.write(`\r\x1b[2K${line.slice(0, columns - 1)}`);
   });
   process.on("SIGINT", () => {
@@ -100,7 +100,7 @@ function drivesText(drives: Drive[], spaces: Array<{ total: number; used: number
   return lines.join("\n") + "\n";
 }
 
-function toJson(scan: ScanSnapshot, layout: Layout): string {
+export function toJson(scan: ScanSnapshot, layout: Layout): string {
   return (
     JSON.stringify(
       {
@@ -108,6 +108,7 @@ function toJson(scan: ScanSnapshot, layout: Layout): string {
         total: scan.total,
         used: scan.used,
         available: scan.available,
+        measured: scan.measured,
         categories: CATEGORIES.map((c) => ({
           id: c.id,
           name: c.name,
@@ -123,7 +124,7 @@ function toJson(scan: ScanSnapshot, layout: Layout): string {
   );
 }
 
-function toText(scan: ScanSnapshot, layout: Layout, driveCount: number): string {
+export function toText(scan: ScanSnapshot, layout: Layout, driveCount: number): string {
   const lines: string[] = [];
   const { drive } = layout;
   if (!IS_MAC) {
@@ -131,6 +132,9 @@ function toText(scan: ScanSnapshot, layout: Layout, driveCount: number): string 
     lines.push(`${drive.name}${where} (${drive.fstype}${drive.device ? `, ${drive.device}` : ""})`);
   }
   lines.push(`${gb(scan.used)} of ${capacity(scan.total)} used, ${gb(scan.available)} available`);
+  if (scan.total > 0 && scan.measured > scan.used) {
+    lines.push(`${gb(scan.measured)} measured across files and folders (${size(scan.measured - scan.used)} above filesystem usage)`);
+  }
   if (layout.lookOnly) lines.push(layout.lookOnly.charAt(0).toUpperCase() + layout.lookOnly.slice(1));
   lines.push("");
 
