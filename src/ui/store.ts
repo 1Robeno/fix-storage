@@ -25,7 +25,7 @@ import { listDrives, pickDrive, type Drive, type Partition } from "../core/drive
 import { size, tilde } from "../core/format";
 import { layoutFor, type Layout } from "../core/layout";
 import { FILE_MANAGER, IS_MAC, OS_NAME } from "../core/platform";
-import { diskSpace, emptySnapshot, measure, startScan, type Item, type ScanHandle, type ScanSnapshot } from "../core/scan";
+import { diskSpace, emptySnapshot, measure, startScan, unmeasuredBytes, type Item, type ScanHandle, type ScanSnapshot } from "../core/scan";
 
 export interface Action {
   id: Clearable;
@@ -71,7 +71,7 @@ export interface AppState {
   confirm: { kind: "category"; id: Clearable } | { kind: "item"; path: string } | null;
   /** Item being moved or deleted right now. */
   removing: string | null;
-  /** Bytes freed since the app started. */
+  /** Estimated bytes cleared since the app started. */
   freed: number;
   /** One line about the last action, shown until the next one. */
   note: string | null;
@@ -582,6 +582,12 @@ export class Store {
       return;
     }
 
+    if (this.options.dryRun && !this.options.demo) {
+      const verb = forGood ? "delete" : "move to Trash";
+      this.set({ removing: null, note: `Dry run: would ${verb} ${basename(item.path)} (${size(item.size)}).` });
+      return;
+    }
+
     // Anything measured above or inside it is out of date now.
     forgetSizes(item.path);
     const culprits = { ...this.state.culprits };
@@ -600,31 +606,32 @@ export class Store {
     items[category] = shrink(items[category]);
     const nextStack = stack.map((level) => ({ ...level, size: Math.max(0, level.size - item.size) }));
 
-    let used = scan.used;
-    let available = scan.available;
+    let space = scan;
+    let measured = scan.measured;
     let freed = this.state.freed;
     if (forGood) {
-      used -= item.size;
-      available += item.size;
+      measured -= scan.sizes[category] - sizes[category];
       freed += item.size;
     } else {
       // Still on disk, only in the Trash now.
       sizes.trash += item.size;
+      measured += item.size - (scan.sizes[category] - sizes[category]);
       items.trash = [{ path: trashed, size: item.size, dir: item.dir }, ...items.trash].sort((a, b) => b.size - a.size);
     }
-    if (!this.pretend && forGood) {
-      const space = await diskSpace(layout.drive);
-      if (space.total > 0) {
-        used = space.used;
-        available = space.available;
-      }
+    if (this.options.demo && forGood) {
+      const taken = Math.min(item.size, scan.used);
+      space = { ...scan, used: scan.used - taken, available: scan.available + taken };
+    } else if (!this.pretend) {
+      const after = await diskSpace(layout.drive);
+      if (after.total > 0) space = { ...scan, ...after };
+      sizes.system += unmeasuredBytes({ ...space, measured }) - unmeasuredBytes(scan);
     }
 
     const list = stack.length === 0 ? items[category] : drop(children);
     const verb = forGood ? "Deleted" : "Moved to Trash:";
     const prefix = this.pretend ? "Dry run, nothing changed. Would have " + (forGood ? "deleted" : "moved to Trash") : verb;
     this.set({
-      scan: { ...scan, sizes, items, used, available },
+      scan: { ...space, sizes, items, measured },
       stack: nextStack,
       children: stack.length === 0 ? children : list,
       row: Math.min(this.state.row, Math.max(0, Math.min(list.length, MAX_ROWS) - 1)),
@@ -675,7 +682,9 @@ export class Store {
   private async run(id: Clearable) {
     const layout = this.state.layout;
     if (!layout || layout.lookOnly) return;
-    const before = this.state.scan.sizes[id];
+    const original = this.state.scan;
+    const dryRun = this.options.dryRun && !this.options.demo;
+    const before = original.sizes[id];
     this.listHandle?.cancel();
     this.set({ action: { id, current: "" }, note: null, hover: null, selected: id, stack: [], children: [], row: 0 });
 
@@ -684,13 +693,15 @@ export class Store {
     const onProgress = ({ path, freed }: { path: string; freed: number }) => {
       const scan = this.state.scan;
       const taken = Math.min(freed, scan.sizes[id]);
+      const simulated = this.options.demo ? Math.min(taken, scan.used) : 0;
       this.set({
         action: { id, current: path },
         scan: {
           ...scan,
           sizes: { ...scan.sizes, [id]: scan.sizes[id] - taken },
-          used: scan.used - taken,
-          available: scan.available + taken,
+          measured: dryRun ? scan.measured : scan.measured - taken,
+          used: scan.used - simulated,
+          available: scan.available + simulated,
         },
       });
     };
@@ -711,20 +722,21 @@ export class Store {
     if (!this.pretend) {
       const [left, space] = await Promise.all([measure(id, layout), diskSpace(layout.drive)]);
       const sizes = { ...scan.sizes, [id]: left };
-      const used = space.total > 0 ? space.used : scan.used;
-      scan = { ...scan, sizes, used, available: space.total > 0 ? space.available : scan.available };
+      const measured = scan.measured + (left - scan.sizes[id]);
+      scan = { ...scan, ...(space.total > 0 ? space : {}), sizes, measured };
+      sizes.system += unmeasuredBytes(scan) - unmeasuredBytes(original);
     }
     const freed = Math.max(0, before - scan.sizes[id]);
     scan = { ...scan, items: { ...scan.items, [id]: [] } };
 
-    const parts: string[] = [`${CATEGORY[id].name}: ${size(freed)} cleared.`];
-    if (this.pretend) parts.push("Dry run: nothing was deleted.");
+    const outcome = dryRun ? "would be cleared" : "cleared (estimated)";
+    const parts = [`${CATEGORY[id].name}: ${size(freed)} ${outcome}.`];
     if (skipped > 0) parts.push(`${skipped} ${skipped === 1 ? "item was" : "items were"} in use or protected and left alone.`);
     this.set({
-      scan,
+      scan: dryRun ? original : scan,
       action: null,
       pane: "sidebar",
-      freed: this.state.freed + freed,
+      freed: this.state.freed + (dryRun ? 0 : freed),
       note: parts.join(" "),
     });
   }
